@@ -500,64 +500,121 @@
 
             // ── MODO AUTOMÁTICO ──
             
-            // Fase 1: Llenar palets existentes hasta 80 (auto-fill target)
+            // 1. Recopilar todos los sacos actuales de todos los palets (preservando color/tipo)
+            let sacosCargados = [];
             for (const p of loadedPallets) {
-                if (qty <= 0) break;
-                if (p.sacks < AUTO_FILL_TARGET) {
-                    const fill = Math.min(qty, AUTO_FILL_TARGET - p.sacks);
-                    for (let k = 0; k < fill; k++) {
-                        p.colors.push({ hex: colorHex, type: typeText });
-                    }
-                    p.sacks += fill;
-                    qty -= fill;
-                    loaded += fill;
-                    updatePallet3D(p);
+                for (const col of p.colors) {
+                    sacosCargados.push(col);
                 }
             }
             
-            // Fase 2: Crear nuevos palets y llenar a 80
-            while (qty > 0 && loadedPallets.length < MAX_PALLETS_PER_TRUCK) {
+            // 2. Añadir los nuevos sacos a la lista global
+            for (let k = 0; k < qty; k++) {
+                sacosCargados.push({ hex: colorHex, type: typeText });
+            }
+            
+            // El total final cargado
+            const totalSacks = sacosCargados.length;
+            loaded = qty;
+            
+            // 3. Determinar cuántos palets necesitamos
+            let numPaletsNecesarios = 0;
+            if (totalSacks <= 0) {
+                numPaletsNecesarios = 0;
+            } else if (totalSacks <= 700) {
+                numPaletsNecesarios = Math.max(1, Math.ceil(totalSacks / STANDARD_PALLET_CAPACITY));
+            } else {
+                numPaletsNecesarios = MAX_PALLETS_PER_TRUCK; // 10
+            }
+            
+            // Ajustar los palets en loadedPallets
+            // Si hay más palets que los necesarios, quitarlos del camión y liberar recursos
+            while (loadedPallets.length > numPaletsNecesarios) {
+                const p = loadedPallets.pop();
+                truckContainer.remove(p.mesh);
+                p.mesh.traverse(child => {
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) {
+                        if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+                        else child.material.dispose();
+                    }
+                });
+            }
+            
+            // Si hay menos, crearlos
+            while (loadedPallets.length < numPaletsNecesarios) {
                 const p = { sacks: 0, colors: [], mesh: new THREE.Group() };
                 loadedPallets.push(p);
                 const idx = loadedPallets.length - 1;
                 const r = Math.floor(idx / 2), c = idx % 2;
-                // Posición de Frontal → Trasero
                 p.mesh.position.set(c === 0 ? -2.6 : 2.6, 1.2, 5.5 - (r * 4.3));
                 p.mesh.scale.set(0.9, 0.9, 0.9);
                 truckContainer.add(p.mesh);
-                
-                const fill = Math.min(qty, AUTO_FILL_TARGET);
-                for (let k = 0; k < fill; k++) {
-                    p.colors.push({ hex: colorHex, type: typeText });
-                }
-                p.sacks += fill;
-                qty -= fill;
-                loaded += fill;
-                updatePallet3D(p);
             }
             
-            // Fase 3: Distribuir extras EQUITATIVAMENTE entre palets
-            // Los extras se reparten de manera pareja (ej: 10 extras → 5+5, no 10+0)
-            if (qty > 0) {
-                const targets = loadedPallets.filter(p => p.sacks < MAX_PALLET_CAPACITY);
-                if (targets.length > 0) {
-                    const perPallet = Math.floor(qty / targets.length);
-                    let remainder = qty % targets.length;
-                    
-                    for (const p of targets) {
-                        if (qty <= 0) break;
-                        let extra = perPallet + (remainder > 0 ? 1 : 0);
-                        if (remainder > 0) remainder--;
-                        extra = Math.min(extra, MAX_PALLET_CAPACITY - p.sacks, qty);
-                        
-                        for (let k = 0; k < extra; k++) {
-                            p.colors.push({ hex: colorHex, type: typeText });
-                        }
-                        p.sacks += extra;
-                        qty -= extra;
-                        loaded += extra;
-                        updatePallet3D(p);
+            // 4. Distribuir sacosCargados sobre loadedPallets
+            if (totalSacks <= 700) {
+                // Caso menor o igual a 700: Llenar a 70 por palet de forma secuencial, sin extras.
+                let sacksIdx = 0;
+                for (let i = 0; i < loadedPallets.length; i++) {
+                    const p = loadedPallets[i];
+                    const count = Math.min(70, totalSacks - sacksIdx);
+                    p.sacks = count;
+                    p.colors = sacosCargados.slice(sacksIdx, sacksIdx + count);
+                    sacksIdx += count;
+                    updatePallet3D(p);
+                }
+            } else {
+                // Caso mayor a 700: Todos los 10 palets tienen al menos 70 sacos (base llena).
+                // Calculamos extrasPerPallet para distribuir los remanentes extras (totalSacks - 700).
+                const E = totalSacks - 700;
+                
+                let extrasPerPallet = Array(MAX_PALLETS_PER_TRUCK).fill(0);
+                let remainingExtras = E;
+                
+                let numTens = Math.floor(remainingExtras / 10);
+                let rem = remainingExtras % 10;
+                
+                // Si el número de decenas es impar, convertimos una decena en dos de 5
+                if (numTens % 2 !== 0) {
+                    numTens -= 1;
+                    rem += 10;
+                }
+                
+                let idx = 0;
+                for (let i = 0; i < numTens; i++) {
+                    extrasPerPallet[idx++] = 10;
+                }
+                
+                while (rem >= 5 && idx < MAX_PALLETS_PER_TRUCK) {
+                    extrasPerPallet[idx++] = 5;
+                    rem -= 5;
+                }
+                
+                if (rem > 0 && idx < MAX_PALLETS_PER_TRUCK) {
+                    extrasPerPallet[idx++] = rem;
+                    rem = 0;
+                }
+                
+                if (rem > 0) {
+                    for (let i = 0; i < MAX_PALLETS_PER_TRUCK; i++) {
+                        let space = MAX_EXTRA_PER_PALLET - extrasPerPallet[i];
+                        let add = Math.min(rem, space);
+                        extrasPerPallet[i] += add;
+                        rem -= add;
+                        if (rem <= 0) break;
                     }
+                }
+                
+                // Asignar los sacos a cada palet en base a 70 + extrasPerPallet[i]
+                let sacksIdx = 0;
+                for (let i = 0; i < MAX_PALLETS_PER_TRUCK; i++) {
+                    const p = loadedPallets[i];
+                    const count = STANDARD_PALLET_CAPACITY + extrasPerPallet[i];
+                    p.sacks = count;
+                    p.colors = sacosCargados.slice(sacksIdx, sacksIdx + count);
+                    sacksIdx += count;
+                    updatePallet3D(p);
                 }
             }
             
