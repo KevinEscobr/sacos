@@ -193,7 +193,8 @@
         // CONFIGURACIÓN TÉCNICA
         // ═══════════════════════════════════════
         const SACOS_POR_FILA = 7;
-        const STANDARD_PALLET_CAPACITY = 70;  // 10 capas estándar
+        const STANDARD_PALLET_CAPACITY = 70;  // 10 capas base (marca visual)
+        const AUTO_FILL_TARGET = 80;          // auto-fill llena a 80 (70 + 10 extras estándar)
         const MAX_EXTRA_PER_PALLET = 15;      // sacos extra permitidos por palet
         const MAX_PALLET_CAPACITY = STANDARD_PALLET_CAPACITY + MAX_EXTRA_PER_PALLET; // 85
         const MAX_PALLETS_PER_TRUCK = 10;
@@ -499,11 +500,11 @@
 
             // ── MODO AUTOMÁTICO ──
             
-            // Fase 1: Llenar palets existentes hasta estándar (70)
+            // Fase 1: Llenar palets existentes hasta 80 (auto-fill target)
             for (const p of loadedPallets) {
                 if (qty <= 0) break;
-                if (p.sacks < STANDARD_PALLET_CAPACITY) {
-                    const fill = Math.min(qty, STANDARD_PALLET_CAPACITY - p.sacks);
+                if (p.sacks < AUTO_FILL_TARGET) {
+                    const fill = Math.min(qty, AUTO_FILL_TARGET - p.sacks);
                     for (let k = 0; k < fill; k++) {
                         p.colors.push({ hex: colorHex, type: typeText });
                     }
@@ -514,7 +515,7 @@
                 }
             }
             
-            // Fase 2: Crear nuevos palets y llenar a estándar (70)
+            // Fase 2: Crear nuevos palets y llenar a 80
             while (qty > 0 && loadedPallets.length < MAX_PALLETS_PER_TRUCK) {
                 const p = { sacks: 0, colors: [], mesh: new THREE.Group() };
                 loadedPallets.push(p);
@@ -525,7 +526,7 @@
                 p.mesh.scale.set(0.9, 0.9, 0.9);
                 truckContainer.add(p.mesh);
                 
-                const fill = Math.min(qty, STANDARD_PALLET_CAPACITY);
+                const fill = Math.min(qty, AUTO_FILL_TARGET);
                 for (let k = 0; k < fill; k++) {
                     p.colors.push({ hex: colorHex, type: typeText });
                 }
@@ -595,13 +596,13 @@
             for (let i = 0; i < p.sacks; i++) {
                 const layer = Math.floor(i / SACOS_POR_FILA);
                 const sub = i % SACOS_POR_FILA;
-                const even = layer % 2 === 0;
+                // Extras (>70): siempre misma orientación para look limpio y compacto
+                const isExtra = i >= STANDARD_PALLET_CAPACITY;
+                const even = isExtra ? true : (layer % 2 === 0);
                 
                 // Color registrado para cada saco (permite palets mixtos)
                 const bagData = p.colors[i];
                 const bagColor = bagData ? bagData.hex : '#ffffff';
-                // Sacos por encima de 70 se marcan como extras
-                const isExtra = i >= STANDARD_PALLET_CAPACITY;
                 const bag = createBag(bagColor, isExtra);
                 
                 if (sub < 4) { // Orientación A
